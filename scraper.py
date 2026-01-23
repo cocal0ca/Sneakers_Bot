@@ -1,210 +1,215 @@
+from abc import ABC, abstractmethod
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
 
 from config import TARGET_URL
-from selenium.webdriver.support.ui import WebDriverWait
 from utils import has_valid_size
 
 
-def get_driver():
-    options = Options()
-    options.add_argument("--headless=new")  # Раскомментировать для продакшена
+class BaseScraper(ABC):
+    """
+    Abstract base class for all scrapers.
+    Handles browser initialization and common cleanup.
+    """
 
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
+    def __init__(self):
+        self.driver = self._get_driver()
 
-    # Инициализация драйвера
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    return driver
+    def _get_driver(self):
+        options = Options()
+        options.add_argument("--headless=new")  # Recommended for production
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        return driver
+
+    def close(self):
+        if self.driver:
+            self.driver.quit()
+
+    @abstractmethod
+    def scrape(self, max_pages: int = 3) -> list:
+        """
+        Main scrapping method.
+        Must return a list of dictionaries with standardized keys:
+        - title, price, old_price, discount, link, image_url, sizes, source
+        """
+        pass
+
+
+class BrandshopScraper(BaseScraper):
+    """
+    Scraper implementation for Brandshop.ru using Nuxt.js state extraction.
+    """
+
+    def scrape(self, max_pages: int = 3) -> list:
+        print(f"[{self.__class__.__name__}] Starting scrape for {TARGET_URL}")
+        deals = []
+
+        try:
+            for page_num in range(1, max_pages + 1):
+                # Construct URL
+                url = TARGET_URL if page_num == 1 else f"{TARGET_URL}?page={page_num}"
+                print(f"[{self.__class__.__name__}] Loading page {page_num}: {url}")
+
+                self.driver.get(url)
+
+                # Wait for Nuxt state
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        lambda d: d.execute_script(
+                            "return window.__NUXT__ !== undefined"
+                        )
+                    )
+                except Exception:
+                    print(
+                        f"[{self.__class__.__name__}] Timeout waiting for data on page {page_num}"
+                    )
+                    continue
+
+                # Extract data
+                try:
+                    items_data = self.driver.execute_script(
+                        "return window.__NUXT__ && window.__NUXT__.data && window.__NUXT__.data[0] ? window.__NUXT__.data[0].catalogProducts : null"
+                    )
+                except Exception as e:
+                    print(
+                        f"[{self.__class__.__name__}] Error extracting data on page {page_num}: {e}"
+                    )
+                    continue
+
+                if not items_data:
+                    print(
+                        f"[{self.__class__.__name__}] No items found on page {page_num}, stopping."
+                    )
+                    break
+
+                print(
+                    f"[{self.__class__.__name__}] Found {len(items_data)} raw items on page {page_num}"
+                )
+
+                for item in items_data:
+                    try:
+                        parsed_item = self._parse_item(item)
+                        if parsed_item:
+                            deals.append(parsed_item)
+                    except Exception as e:
+                        print(f"[{self.__class__.__name__}] Error parsing item: {e}")
+                        continue
+
+        except Exception as e:
+            print(f"[{self.__class__.__name__}] Critical Selenium Error: {e}")
+
+        return deals
+
+    def _parse_item(self, item: dict) -> dict:
+        """Helper to parse a single raw item dictionary."""
+        brand = item.get("title", "")
+
+        # Determine model name
+        subtitles = item.get("subtitles", [])
+        model = ""
+        if len(subtitles) > 1:
+            model = subtitles[1].get("subtitle", "")
+
+        if model:
+            title = f"{brand} {model}".strip()
+        else:
+            full_name = item.get("fullName", "")
+            title = f"{brand} {full_name}".strip()
+
+        # Prices
+        price_info = item.get("price", {})
+        current_price = price_info.get("newAmount") or price_info.get("amount")
+        old_price = price_info.get("amount") if price_info.get("newAmount") else None
+
+        discount = price_info.get("discount", "")
+        url_part = item.get("url", "")
+
+        # Image
+        product_img = item.get("productImg", [])
+        image_url = None
+        if product_img and len(product_img) > 0:
+            image_url = product_img[0].get("retina", {}).get("popup", "")
+
+        # Validation
+        if not title or not current_price or not url_part:
+            return None
+
+        link = f"https://brandshop.ru{url_part}"
+
+        # Sizes
+        sizes_data = item.get("sizes", {}).get("size", [])
+        sizes_list = [s.get("name", "") for s in sizes_data if s.get("name")]
+
+        # Filter sizes
+        if not has_valid_size(sizes_list):
+            return None
+
+        # Formatting
+        price_text = f"{int(current_price):,} ₽".replace(",", " ")
+        old_price_text = (
+            f"{int(old_price):,} ₽".replace(",", " ") if old_price else "N/A"
+        )
+        discount_text = f"-{discount}%" if discount else ""
+
+        return {
+            "title": title,
+            "price": price_text,
+            "old_price": old_price_text,
+            "discount": discount_text,
+            "link": link,
+            "is_discount": item.get("isDiscount", False),
+            "image_url": image_url,
+            "sizes": sizes_list,
+            "source": "Brandshop",
+        }
 
 
 def get_discounts(max_pages=3):
     """
-    Парсит кроссовки с Brandshop.
-    Извлекает данные из Nuxt.js state (window.__NUXT__).
-
-    Args:
-        max_pages: Максимальное количество страниц для парсинга (по умолчанию 3)
+    Wrapper function to maintain backward compatibility with main.py.
+    Instantiates the scraper, runs it, and ensures cleanup.
     """
-    print(f"Запускаю браузер для: {TARGET_URL}")
-    driver = None
-    deals = []
-
+    scraper = None
     try:
-        driver = get_driver()
-
-        for page_num in range(1, max_pages + 1):
-            # Формируем URL с пагинацией
-            if page_num == 1:
-                url = TARGET_URL
-            else:
-                url = f"{TARGET_URL}?page={page_num}"
-
-            print(f"Загружаю страницу {page_num}: {url}")
-            driver.get(url)
-
-            # Ждем появления данных (умное ожидание вместо sleep)
-            try:
-                WebDriverWait(driver, 10).until(
-                    lambda d: d.execute_script("return window.__NUXT__ !== undefined")
-                )
-            except Exception:
-                print(f"Таймаут ожидания данных на странице {page_num}")
-
-            # Извлекаем данные из Nuxt state
-            try:
-                items_data = driver.execute_script(
-                    "return window.__NUXT__ && window.__NUXT__.data && window.__NUXT__.data[0] ? window.__NUXT__.data[0].catalogProducts : null"
-                )
-            except Exception as e:
-                print(f"Ошибка при извлечении данных со страницы {page_num}: {e}")
-                continue
-
-            if not items_data:
-                print(f"Страница {page_num}: Товары не найдены, завершаем парсинг")
-                break
-
-            print(f"Страница {page_num}: Найдено {len(items_data)} товаров")
-
-            for item in items_data:
-                try:
-                    # Извлекаем данные о товаре
-                    brand = item.get("title", "")
-
-                    # Формируем короткое название: Бренд + Модель
-                    # Модель часто находится в subtitles[1]
-                    subtitles = item.get("subtitles", [])
-                    model = ""
-                    if len(subtitles) > 1:
-                        # Обычно subtitles[0] это "Кроссовки", а subtitles[1] это модель
-                        model = subtitles[1].get("subtitle", "")
-
-                    if model:
-                        title = f"{brand} {model}".strip()
-                    else:
-                        # Fallback на полное имя, если структуру поменяли
-                        full_name = item.get("fullName", "")
-                        title = f"{brand} {full_name}".strip()
-
-                    # Цены
-                    price_info = item.get("price", {})
-                    current_price = price_info.get("newAmount") or price_info.get(
-                        "amount"
-                    )
-                    old_price = (
-                        price_info.get("amount")
-                        if price_info.get("newAmount")
-                        else None
-                    )
-
-                    # Скидка
-                    is_discount = item.get("isDiscount", False)
-                    discount = price_info.get("discount", "")
-
-                    # Ссылка на товар
-                    url_part = item.get("url", "")
-
-                    # Изображение товара
-                    product_img = item.get("productImg", [])
-                    image_url = None
-                    if product_img and len(product_img) > 0:
-                        # Берем первое изображение в высоком качестве (retina popup)
-                        image_url = product_img[0].get("retina", {}).get("popup", "")
-
-                    if not title or not current_price or not url_part:
-                        continue
-
-                    link = f"https://brandshop.ru{url_part}"
-
-                    # Размеры
-                    sizes_data = item.get("sizes", {}).get("size", [])
-                    sizes_list = []
-                    if sizes_data:
-                        for s in sizes_data:
-                            s_name = s.get("name", "")
-                            # Обычно формат "41 EU", "42 EU" и т.д.
-                            if s_name:
-                                sizes_list.append(s_name)
-
-                    # Фильтрация по размеру (только если есть 41+)
-                    if not has_valid_size(sizes_list):
-                        # Debug
-                        # print(f"Пропускаем {title} (размеры: {sizes_list})")
-                        continue
-
-                    # Форматируем цены
-                    price_text = f"{int(current_price):,} ₽".replace(",", " ")
-                    old_price_text = (
-                        f"{int(old_price):,} ₽".replace(",", " ")
-                        if old_price
-                        else "N/A"
-                    )
-                    discount_text = f"-{discount}%" if discount else ""
-
-                    deals.append(
-                        {
-                            "title": title,
-                            "price": price_text,
-                            "old_price": old_price_text,
-                            "discount": discount_text,
-                            "link": link,
-                            "is_discount": is_discount,
-                            "image_url": image_url,
-                            "sizes": sizes_list,
-                        }
-                    )
-
-                except Exception as e:
-                    print(f"Ошибка при обработке товара: {e}")
-                    continue
-
-    except Exception as e:
-        print(f"Критическая ошибка Selenium: {e}")
+        scraper = BrandshopScraper()
+        return scraper.scrape(max_pages=max_pages)
     finally:
-        if driver:
-            driver.quit()
-
-    print(f"Всего найдено товаров: {len(deals)}")
-    return deals
+        if scraper:
+            scraper.close()
 
 
 if __name__ == "__main__":
     import sys
 
-    # Устанавливаем UTF-8 для вывода в консоль
+    # Win32 UTF-8 fix
     if sys.platform == "win32":
         import io
 
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
     print("=" * 50)
-    print("Тестовый запуск парсера Brandshop")
+    print("Testing BrandshopScraper Class")
     print("=" * 50)
 
-    items = get_discounts(max_pages=1)  # Для теста парсим только 1 страницу
+    # Use the wrapper to test everything end-to-end
+    items = get_discounts(max_pages=1)
 
-    print("\nПримеры найденных товаров (первые 5):")
+    print("\nResult Sample (First 3 items):")
     print("-" * 50)
-
-    for i, item in enumerate(items[:5], 1):
-        print(f"\n{i}. {item['title']}")
-        print(f"   Цена: {item['price']}", end="")
-        if item["old_price"] != "N/A":
-            print(f" (было {item['old_price']}) {item['discount']}")
-        else:
-            print()
-        print(f"   Ссылка: {item['link']}")
-        if item.get("image_url"):
-            print(f"   Фото: {item['image_url']}")
-        else:
-            print("   Фото: не найдено")
-
-        if item.get("sizes"):
-            print(f"   Размеры: {', '.join(item['sizes'])}")
+    for i, item in enumerate(items[:3], 1):
+        print(
+            f"{i}. [{item['source']}] {item['title']} | {item['price']} (Old: {item['old_price']})"
+        )
+        print(f"   Link: {item['link']}")
+        print(f"   Sizes: {item['sizes']}")
