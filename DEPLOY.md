@@ -1,0 +1,102 @@
+# Инструкция по деплою на Timeweb
+
+У тебя есть два пути: простой (через **Apps**) и классический (через **VPS**).
+
+---
+
+## Вариант 1: Timeweb Cloud Apps (Самый простой) 🚀
+
+Этот способ не требует настройки сервера. Ты просто подключаешь GitHub, и Timeweb сам всё собирает через наш `Dockerfile`.
+
+1.  **Подготовка:**
+    *   Убедись, что файл `Dockerfile` есть в репозитории (я его только что создал).
+    *   Запушь все изменения в GitHub:
+        ```bash
+        git add .
+        git commit -m "add dockerfile"
+        git push
+        ```
+
+2.  **Настройка в Timeweb:**
+    *   Зайди в панель **Timeweb Cloud** -> раздел **Apps**.
+    *   Нажми **"Создать приложение"**.
+    *   Выбери **GitHub** и найди свой репозиторий `Sneakers_Bot`.
+    *   Timeweb автоматически определит `Dockerfile`.
+    *   Выберите тариф (хватит минимального).
+    *   Нажми **"Запустить"**.
+
+3.  **Готово!** Бот сам соберет образ с Chrome и запустится. Следить за ним можно в логах в панели управления.
+
+---
+
+## Вариант 2: VPS (Виртуальный сервер) 💻
+
+Если хочешь полный контроль и дешевле.
+
+1.  **Купи сервер** в Timeweb Cloud:
+    *   ОС: **Ubuntu 22.04**.
+    *   Тариф: Минимум 1-2 vCPU и 2GB RAM (Chrome прожорлив).
+
+2.  **Зайди на сервер** через терминал:
+    ```bash
+    ssh root@IP_ТВОЕГО_СЕРВЕРА
+    ```
+
+3.  **Выполни команды** (по очереди):
+
+    ```bash
+    # 1. Обновляем систему
+    sudo apt update && sudo apt upgrade -y
+
+    # 2. Устанавливаем Google Chrome
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+    sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+    sudo apt update
+    sudo apt install google-chrome-stable -y
+    
+    # 3. Устанавливаем Python и Git
+    sudo apt install python3-pip python3-venv git -y
+
+    # 4. Клонируем бота
+    git clone https://github.com/cocal0ca/Sneakers_Bot.git
+    cd Sneakers_Bot
+
+    # 5. Настраиваем окружение
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
+
+4.  **Запуск в фоне (Systemd):**
+    Чтобы бот не выключался при закрытии терминала:
+    
+    ```bash
+    # Создаем файл службы
+    nano /etc/systemd/system/sneaker_bot.service
+    ```
+    
+    Вставь туда:
+    ```ini
+    [Unit]
+    Description=Sneaker Bot
+    After=network.target
+
+    [Service]
+    User=root
+    WorkingDirectory=/root/Sneakers_Bot
+    ExecStart=/root/Sneakers_Bot/venv/bin/python main.py
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+    *(Нажми Ctrl+O, Enter, Ctrl+X)*
+
+    ```bash
+    # Запускаем
+    systemctl daemon-reload
+    systemctl enable sneaker_bot
+    systemctl start sneaker_bot
+    ```
+
+Всё работает!
