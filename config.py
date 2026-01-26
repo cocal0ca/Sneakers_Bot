@@ -1,7 +1,5 @@
-import os
-
 # Токен бота (лучше брать из переменных окружения, но для старта можно так)
-BOT_TOKEN = "8583683842:AAGULmRc4SU4wG_OIlWAvFLFqCR8EdsyT08"
+BOT_TOKEN = "8399394633:AAFyAUocOjkoiMzBNxqDpOHN5oxEl4FCF1o"
 
 # Ссылка для парсинга (Brandshop - Кроссовки со скидками)
 # Можно также использовать /muzhskoe/obuv/krossovki/ для всех мужских кроссовок
@@ -17,4 +15,7 @@ HEADERS = {
 DB_NAME = "deals.db"
 
 # ID канала для рассылки
-CHANNEL_ID = "@krosi_na_skidochkax"
+CHANNEL_ID = "@Sneaker_Deals"
+
+# Через сколько дней можно присылать товар повторно (если он пропадал из продажи)
+REPOST_DAYS = 7

@@ -51,11 +51,12 @@ async def check_and_send_discounts(chat_id=None):
     new_deals_count = 0
 
     for deal in deals:
-        # Если такого товара еще не было в базе
-        if not deal_exists(deal["link"]):
-            # Сохраняем
-            save_deal(deal["title"], deal["price"], deal["old_price"], deal["link"])
+        # Проверяем, нужно ли отправлять (возвращает False, если нужно отправить)
+        # ВНИМАНИЕ: deal_exists теперь возвращает True если "существует и актуально" (не слать)
+        # и False если "новое или вернулось" (слать)
+        should_post = not deal_exists(deal["link"])
 
+        if should_post:
             # Формируем строку с размерами
             sizes_list = deal.get("sizes", [])
             sizes_str = format_sizes(sizes_list)
@@ -65,7 +66,7 @@ async def check_and_send_discounts(chat_id=None):
 
             # Формируем сообщение (caption для фото)
             caption = (
-                f"🔥 <b>Кроссовки на скидочках</b>\n"
+                f"👀 <b>Смотри, что нашел</b>\n"
                 f"👟 {deal['title']}\n"
                 f"💰 <b>{deal['price']}</b> (было {deal['old_price']})\n"
                 f"🏷 Скидка: {deal['discount']}\n"
@@ -75,7 +76,7 @@ async def check_and_send_discounts(chat_id=None):
             # Создаем кнопку
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="Купить 🛒", url=deal["link"])]
+                    [InlineKeyboardButton(text="Посмотреть 🛒", url=deal["link"])]
                 ]
             )
 
@@ -120,19 +121,13 @@ async def check_and_send_discounts(chat_id=None):
                 except Exception:
                     pass
 
-            # Если нужно отправлять и подписчикам тоже, раскомментируйте ниже:
-            # else:
-            #     for user_id in SUBSCRIBERS:
-            #         try:
-            #             if deal.get("image_url"):
-            #                 await bot.send_photo(user_id, photo=deal["image_url"], caption=caption, parse_mode="HTML", reply_markup=keyboard)
-            #             else:
-            #                 await bot.send_message(user_id, caption, parse_mode="HTML", reply_markup=keyboard)
-            #         except:
-            #             pass
-
             new_deals_count += 1
             await asyncio.sleep(1)  # Пауза чтобы не спамить в API телеграма
+
+        # ВАЖНО: Мы ВСЕГДА обновляем запись в базе (last_seen = now)
+        # Если отправили - запишется как новая.
+        # Если не отправили - обновится last_seen, чтобы "дырка" не росла.
+        save_deal(deal["title"], deal["price"], deal["old_price"], deal["link"])
 
     return new_deals_count
 
