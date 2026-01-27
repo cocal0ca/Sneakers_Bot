@@ -72,7 +72,7 @@ class StreetBeatScraper:
                     item = self._parse_card(card)
                     if item:
                         deals.append(item)
-                except Exception as e:
+                except Exception:
                     # Ошибки парсинга конкретной карты не должны ломать весь процесс
                     continue
 
