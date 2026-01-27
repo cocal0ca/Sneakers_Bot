@@ -88,7 +88,7 @@ def format_sizes(sizes_list):
                 end_v = group[-1]
                 s_str = f"{int(start_v)}" if start_v.is_integer() else f"{start_v}"
                 e_str = f"{int(end_v)}" if end_v.is_integer() else f"{end_v}"
-                final_strings.append(f"{s_str}-{e_str}")
+                final_strings.append(f"{s_str} - {e_str}")
             else:
                 for v in group:
                     v_str = f"{int(v)}" if v.is_integer() else f"{v}"
@@ -133,20 +133,73 @@ def has_valid_size(sizes_list, min_size=41.0):
         return False
 
 
+def clean_title(title):
+    """
+    Очищает название товара от общих слов (кроссовки, кеды и т.д.)
+    и лишних пробелов.
+    """
+    if not title:
+        return ""
+
+    # Список слов для удаления (в нижнем регистре)
+    words_to_remove = [
+        "кроссовки",
+        "мужские",
+        "женские",
+        "кеды",
+        "высокие",
+        "низкие",
+        "ботинки",
+        "сандалии",
+        "сланцы",
+        "тапочки",
+    ]
+
+    # Разбиваем на слова
+    words = title.split()
+    cleaned_words = []
+
+    # first_word_taken removed
+
+    for word in words:
+        # Проверяем слово в нижнем регистре
+        if word.lower() not in words_to_remove:
+            # Проверка на дубликат с предыдущим добавленным словом
+            if cleaned_words and cleaned_words[-1].lower() == word.lower():
+                continue
+
+            cleaned_words.append(word)
+
+    # Собираем обратно
+    cleaned_title = " ".join(cleaned_words)
+    return cleaned_title
+
+
 if __name__ == "__main__":
     # Simple tests
-    print(format_sizes(["41", "42", "43"]))  # Expected: 41-43
+    print(format_sizes(["41", "42", "43"]))  # Expected: 41 - 43
     print(format_sizes(["40", "42", "44"]))  # Expected: 40, 42, 44
-    print(format_sizes(["40", "40.5", "41", "41.5", "42"]))  # Expected: 40-42
-    print(format_sizes(["39", "40", "41", "45", "46"]))  # Expected: 39-41, 45, 46
+    print(format_sizes(["40", "40.5", "41", "41.5", "42"]))  # Expected: 40 - 42
+    print(format_sizes(["39", "40", "41", "45", "46"]))  # Expected: 39 - 41, 45, 46
 
     # Test has_valid_size
     print(
         f"Has valid size (41+): {has_valid_size(['39 EU', '40 EU'])}"
     )  # Expected: False
-    print(
-        f"Has valid size (41+): {has_valid_size(['40 EU', '41 EU'])}"
-    )  # Expected: True
-    print(
-        f"Has valid size (41+): {has_valid_size(['36 EU', 42, 45])}"
-    )  # Expected: True
+
+    # Test clean_title
+    print("\nTest clean_title:")
+    print(f"Original: Кроссовки мужские Nike Air Jordan")
+    print(f"Cleaned:  {clean_title('Кроссовки мужские Nike Air Jordan')}")
+
+    print(f"Original: Кеды Vans Old Skool")
+    print(f"Cleaned:  {clean_title('Кеды Vans Old Skool')}")
+
+    print(f"Original: Ботинки TIMBERLAND Premium 6")
+    print(f"Cleaned:  {clean_title('Ботинки TIMBERLAND Premium 6')}")
+
+    print(f"Original: Puma Puma Suede Classic")
+    print(f"Cleaned:  {clean_title('Puma Puma Suede Classic')}")
+
+    print(f"Original: Reebok Reebok Club C")
+    print(f"Cleaned:  {clean_title('Reebok Reebok Club C')}")

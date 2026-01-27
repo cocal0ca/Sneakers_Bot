@@ -16,7 +16,7 @@ from streetbeat_scraper import get_streetbeat_discounts
 from image_processing import process_image
 from aiogram.types import BufferedInputFile
 
-from utils import format_sizes
+from utils import format_sizes, clean_title
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -87,13 +87,16 @@ async def check_and_send_discounts(chat_id=None):
             # Выбираем заголовок в зависимости от количества размеров
             size_label = "Размер" if len(sizes_list) == 1 else "Размеры"
 
+            # Очищаем название
+            cleaned_title = clean_title(deal["title"])
+
             # Формируем сообщение (caption для фото)
             source_name = deal.get("source", "Brandshop")
             caption = (
-                f"👀 <b>Смотри, что нашел на {source_name}</b>\n"
-                f"👟 {deal['title']}\n"
+                f"👀 <b>Смотри, что нашел на {source_name}</b>\n\n"
+                f"{cleaned_title}\n\n"
                 f"💰 <b>{deal['price']}</b> (было {deal['old_price']})\n"
-                f"🏷 Скидка: {deal['discount']}\n"
+                f"🏷 Скидка: {deal['discount']}\n\n"
                 f"📏 {size_label}: EU {sizes_str}"
             )
 
@@ -104,40 +107,56 @@ async def check_and_send_discounts(chat_id=None):
                 ]
             )
 
+            # --- ОПТИМИЗАЦИЯ ФОТО ---
+            # Загружаем фото один раз перед отправкой всем получателям
+            photo_bytes = None
+            if deal.get("image_url"):
+                try:
+                    photo_bytes = await loop.run_in_executor(
+                        None, process_image, deal["image_url"]
+                    )
+                except Exception as e:
+                    print(f"Error processing image for {deal['title']}: {e}")
+                    photo_bytes = None
+
             # Вспомогательная функция отправки
-            async def send_deal_photo(target_id):
-                if deal.get("image_url"):
+            async def send_deal_photo(target_id, photo_data=None):
+                # Если смогли скачать фото
+                if photo_data:
                     try:
-                        # Скачиваем и обрабатываем фото (обрезаем лишнее)
-                        # Запускаем в executor, так как requests и PIL блокирующие
-                        photo_bytes = await loop.run_in_executor(
-                            None, process_image, deal["image_url"]
+                        # Важно: сбрасываем указатель в начало, так как буфер мог быть прочитан
+                        photo_data.seek(0)
+
+                        # Создаем новый InputFile для каждой отправки
+                        photo_file = BufferedInputFile(
+                            photo_data.read(), filename="sneaker.jpg"
                         )
 
-                        if photo_bytes:
-                            # Отправляем как файл
-                            photo_file = BufferedInputFile(
-                                photo_bytes.read(), filename="sneaker.jpg"
-                            )
-                            await bot.send_photo(
-                                target_id,
-                                photo=photo_file,
-                                caption=caption,
-                                parse_mode="HTML",
-                                reply_markup=keyboard,
-                            )
-                        else:
-                            # Если обработка не удалась, шлем как URL
-                            await bot.send_photo(
-                                target_id,
-                                photo=deal["image_url"],
-                                caption=caption,
-                                parse_mode="HTML",
-                                reply_markup=keyboard,
-                            )
+                        await bot.send_photo(
+                            target_id,
+                            photo=photo_file,
+                            caption=caption,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                        )
+                        return  # Успех
                     except Exception as e:
-                        print(f"Photo send error: {e}")
-                        # Фолбэк на текст если фото не отправилось
+                        print(f"Photo bytes send error to {target_id}: {e}")
+                        # Если не вышло байтами, пробуем URL ниже
+
+                # Если байтов нет или отправка байтами упала - пробуем URL
+                if deal.get("image_url"):
+                    try:
+                        await bot.send_photo(
+                            target_id,
+                            photo=deal["image_url"],
+                            caption=caption,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                        )
+                    except Exception as e:
+                        print(f"Photo URL send error to {target_id}: {e}")
+                        # Если и URL не прошел - шлем текст
                         await bot.send_message(
                             target_id,
                             caption,
@@ -145,7 +164,7 @@ async def check_and_send_discounts(chat_id=None):
                             reply_markup=keyboard,
                         )
                 else:
-                    # Если фото нет совсем
+                    # Если фото совсем нет
                     await bot.send_message(
                         target_id,
                         caption,
@@ -156,14 +175,14 @@ async def check_and_send_discounts(chat_id=None):
             # Отправляем в канал
             if CHANNEL_ID:
                 try:
-                    await send_deal_photo(CHANNEL_ID)
+                    await send_deal_photo(CHANNEL_ID, photo_bytes)
                 except Exception as e:
                     print(f"Error sending to channel: {e}")
 
             # Отправляем подписчикам (тест)
             if chat_id:
                 try:
-                    await send_deal_photo(chat_id)
+                    await send_deal_photo(chat_id, photo_bytes)
                 except Exception:
                     pass
 
@@ -171,8 +190,6 @@ async def check_and_send_discounts(chat_id=None):
             await asyncio.sleep(1)  # Пауза чтобы не спамить в API телеграма
 
         # ВАЖНО: Мы ВСЕГДА обновляем запись в базе (last_seen = now)
-        # Если отправили - запишется как новая.
-        # Если не отправили - обновится last_seen, чтобы "дырка" не росла.
         save_deal(deal["title"], deal["price"], deal["old_price"], deal["link"])
 
     return new_deals_count
