@@ -1,5 +1,11 @@
+import os
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из .env файла
+load_dotenv()
+
 # Токен бота (лучше брать из переменных окружения, но для старта можно так)
-BOT_TOKEN = "8399394633:AAFyAUocOjkoiMzBNxqDpOHN5oxEl4FCF1o"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Ссылка для парсинга (Brandshop - Кроссовки со скидками)
 # Можно также использовать /muzhskoe/obuv/krossovki/ для всех мужских кроссовок

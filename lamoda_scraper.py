@@ -215,7 +215,8 @@ class LamodaScraper:
                 )
                 image_done = img_elem.get_attribute("src")
                 if image_done:
-                    image_url = image_done.replace("img236x341", "product")
+                    # Replace any resolution (e.g. img236x341) with img600x866
+                    image_url = re.sub(r"img\d+x\d+", "img600x866", image_done)
                 else:
                     image_url = None
             except Exception:

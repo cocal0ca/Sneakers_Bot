@@ -11,4 +11,7 @@ lamoda_scripts.txt
 # Debug scripts
 debug_lamoda_sizes.py
 check_improvements.py
-inspect_product.py
+config.py
+.env
+config.py
+.env

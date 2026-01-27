@@ -1,12 +1,18 @@
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+)
 from config import BOT_TOKEN, CHANNEL_ID
 from database import init_db, deal_exists, save_deal
 from scraper import get_discounts
 from lamoda_scraper import get_lamoda_discounts
+from streetbeat_scraper import get_streetbeat_discounts
 from image_processing import process_image
 from aiogram.types import BufferedInputFile
 
@@ -26,11 +32,20 @@ SUBSCRIBERS = set()
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     SUBSCRIBERS.add(message.chat.id)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🔍 Поиск скидок")]], resize_keyboard=True
+    )
     await message.answer(
         "Привет! 👟 Я буду присылать тебе скидки на кроссовки с Brandshop и Lamoda.\n"
         "Я автоматически проверяю сайты каждые 30 минут.\n"
-        "Нажми /latest чтобы запустить проверку прямо сейчас."
+        "Нажми кнопку ниже или /latest чтобы запустить проверку прямо сейчас.",
+        reply_markup=kb,
     )
+
+
+@dp.message(F.text == "🔍 Поиск скидок")
+async def handle_search_button(message: types.Message):
+    await cmd_latest(message)
 
 
 @dp.message(Command("latest"))
@@ -52,9 +67,10 @@ async def check_and_send_discounts(chat_id=None):
     # Запускаем оба парсера параллельно в отдельных потоках
     brandshop_deals = await loop.run_in_executor(None, get_discounts)
     lamoda_deals = await loop.run_in_executor(None, get_lamoda_discounts)
+    streetbeat_deals = await loop.run_in_executor(None, get_streetbeat_discounts)
 
     # Объединяем результаты
-    deals = brandshop_deals + lamoda_deals
+    deals = brandshop_deals + lamoda_deals + streetbeat_deals
     new_deals_count = 0
 
     for deal in deals:
