@@ -5,6 +5,9 @@ BOT_TOKEN = "8399394633:AAFyAUocOjkoiMzBNxqDpOHN5oxEl4FCF1o"
 # Можно также использовать /muzhskoe/obuv/krossovki/ для всех мужских кроссовок
 TARGET_URL = "https://brandshop.ru/sale/obuv/krossovki/"
 
+# Ссылка для Lamoda (мужские кроссовки и кеды со скидками)
+LAMODA_URL = "https://www.lamoda.ru/c/2968/shoes-krossovki-kedy/?genders=men&is_sale=1"
+
 # Заголовки, чтобы притворяться обычным браузером
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",

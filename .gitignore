@@ -3,3 +3,12 @@ __pycache__/
 *.db
 *.log
 .DS_Store
+
+# Debug artifacts
+*.html
+lamoda_scripts.txt
+
+# Debug scripts
+debug_lamoda_sizes.py
+check_improvements.py
+inspect_product.py
