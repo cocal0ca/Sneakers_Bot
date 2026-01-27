@@ -189,17 +189,17 @@ if __name__ == "__main__":
 
     # Test clean_title
     print("\nTest clean_title:")
-    print(f"Original: Кроссовки мужские Nike Air Jordan")
+    print("Original: Кроссовки мужские Nike Air Jordan")
     print(f"Cleaned:  {clean_title('Кроссовки мужские Nike Air Jordan')}")
 
-    print(f"Original: Кеды Vans Old Skool")
+    print("Original: Кеды Vans Old Skool")
     print(f"Cleaned:  {clean_title('Кеды Vans Old Skool')}")
 
-    print(f"Original: Ботинки TIMBERLAND Premium 6")
+    print("Original: Ботинки TIMBERLAND Premium 6")
     print(f"Cleaned:  {clean_title('Ботинки TIMBERLAND Premium 6')}")
 
-    print(f"Original: Puma Puma Suede Classic")
+    print("Original: Puma Puma Suede Classic")
     print(f"Cleaned:  {clean_title('Puma Puma Suede Classic')}")
 
-    print(f"Original: Reebok Reebok Club C")
+    print("Original: Reebok Reebok Club C")
     print(f"Cleaned:  {clean_title('Reebok Reebok Club C')}")
