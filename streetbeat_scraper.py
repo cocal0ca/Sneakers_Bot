@@ -3,7 +3,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
-import re
+
 from typing import List, Dict, Optional
 
 # Constants
@@ -102,7 +102,7 @@ class StreetBeatScraper:
                     .replace("руб.", "")
                     .strip()
                 )
-            except:
+            except Exception:
                 # Если нет новой цены, возможно нет скидки, или другая структура
                 return None
 
@@ -118,7 +118,7 @@ class StreetBeatScraper:
                     .replace("руб.", "")
                     .strip()
                 )
-            except:
+            except Exception:
                 pass
 
             # Скидка (вычисляем или ищем бейдж)
@@ -130,7 +130,7 @@ class StreetBeatScraper:
                         By.CSS_SELECTOR, ".product-new-badge__title"
                     )
                     discount = badge_el.text.strip()
-                except:
+                except Exception:
                     # Если бейджа нет, можно посчитать
                     pass
 
@@ -146,7 +146,7 @@ class StreetBeatScraper:
                     lbl.get_attribute("textContent").strip() for lbl in size_labels
                 ]
                 sizes = [s for s in sizes if s]
-            except:
+            except Exception:
                 pass
 
             # Фильтрация по наличию размеров
@@ -169,7 +169,7 @@ class StreetBeatScraper:
                 # Поэтому пока оставим как есть, или проверим data-src
                 if not image_url or "data:image" in image_url:
                     image_url = img_el.get_attribute("data-src")
-            except:
+            except Exception:
                 pass
 
             return {
@@ -183,7 +183,7 @@ class StreetBeatScraper:
                 "source": "StreetBeat",  # Используем короткое имя для Source
             }
 
-        except Exception as e:
+        except Exception:
             # print(f"Error parsing card: {e}")
             return None
 
