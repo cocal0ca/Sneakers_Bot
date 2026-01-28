@@ -28,3 +28,23 @@ CHANNEL_ID = "@Sneaker_Deals"
 
 # Через сколько дней можно присылать товар повторно (если он пропадал из продажи)
 REPOST_DAYS = 7
+
+# Настройки партнерских сетей (CPA)
+# Замените значения на ваши реальные ссылки/ID
+AFFILIATE_NETWORKS = {
+    "StreetBeat": {
+        "type": "admitad",
+        # Пример: https://ad.admitad.com/g/YOUR_KEY/?subid=telegram_bot&ulp=
+        "base_url": "",
+    },
+    "Lamoda": {
+        "type": "actionpay",
+        # Пример: https://click.actionpay.ru/...?url=
+        "base_url": "",
+    },
+    "Brandshop": {
+        "type": "custom",
+        # Любой другой формат
+        "base_url": "",
+    },
+}

@@ -14,6 +14,7 @@ from scraper import get_discounts
 from lamoda_scraper import get_lamoda_discounts
 from streetbeat_scraper import get_streetbeat_discounts
 from image_processing import process_image
+from affiliate_manager import AffiliateManager
 from aiogram.types import BufferedInputFile
 
 from utils import format_sizes, clean_title
@@ -100,10 +101,15 @@ async def check_and_send_discounts(chat_id=None):
                 f"📏 {size_label}: EU {sizes_str}"
             )
 
-            # Создаем кнопку
+            # Создаем кнопку с партнерской ссылкой
+            aff_manager = AffiliateManager()
+            aff_link = aff_manager.convert_link(
+                deal["link"], deal.get("source", "Unknown")
+            )
+
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="Посмотреть 🛒", url=deal["link"])]
+                    [InlineKeyboardButton(text="Посмотреть 🛒", url=aff_link)]
                 ]
             )
 
