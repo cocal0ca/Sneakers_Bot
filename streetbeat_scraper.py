@@ -23,7 +23,7 @@ class StreetBeatScraper:
     def _get_driver(self):
         options = uc.ChromeOptions()
         # Headless режим может быть определен Cloudflare, но попробуем с ним или без
-        # options.add_argument("--headless=new")
+        options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-blink-features=AutomationControlled")
