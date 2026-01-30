@@ -29,7 +29,7 @@ class LamodaScraper:
 
         # undetected-chromedriver автоматически скачивает подходящую версию
         # Указываем версию Chrome явно (133) для избежания несоответствия
-        driver = uc.Chrome(options=options, version_main=133)
+        driver = uc.Chrome(options=options, version_main=144)
         return driver
 
     def close(self):

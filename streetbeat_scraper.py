@@ -5,6 +5,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 
 from typing import List, Dict, Optional
+from database import deal_exists
 
 # Constants
 STREETBEAT_URL = "https://street-beat.ru/cat/man/krossovki/sale/"
@@ -28,7 +29,7 @@ class StreetBeatScraper:
         options.add_argument("--disable-blink-features=AutomationControlled")
 
         # Важно: версия должна совпадать или быть близкой к установленной
-        driver = uc.Chrome(options=options, version_main=133)
+        driver = uc.Chrome(options=options, version_main=144)
         return driver
 
     def close(self):
@@ -141,13 +142,18 @@ class StreetBeatScraper:
                     old_price_num = item.get("unitPrice")
 
                     price_text = (
-                        f"{int(price_num)}".replace(",", " ") if price_num else ""
-                    )
-                    old_price_text = (
-                        f"{int(old_price_num)}".replace(",", " ")
-                        if old_price_num
+                        f"{int(price_num)}".replace(",", " ") + " ₽"
+                        if price_num
                         else ""
                     )
+
+                    # Show old price only if it's strictly greater than current price
+                    if old_price_num and old_price_num > price_num:
+                        old_price_text = (
+                            f"{int(old_price_num)}".replace(",", " ") + " ₽"
+                        )
+                    else:
+                        old_price_text = ""
 
                     # Скидка
                     discount = ""
@@ -167,6 +173,43 @@ class StreetBeatScraper:
                         "sizes": sizes,
                         "source": "StreetBeat",
                     }
+
+                    # Проверяем, новый ли это товар, и если да — скачиваем фото браузером
+                    # Это нужно, так как обычные requests (process_image) блокируются (403 Forbidden)
+                    if not deal_exists(product_url):
+                        if image_url:
+                            try:
+                                script = """
+                                var url = arguments[0];
+                                var callback = arguments[1];
+                                fetch(url)
+                                    .then(response => response.blob())
+                                    .then(blob => {
+                                        var reader = new FileReader();
+                                        reader.onload = function() {
+                                            callback(reader.result);
+                                        };
+                                        reader.readAsDataURL(blob);
+                                    })
+                                    .catch(err => callback(null));
+                                """
+                                # execute_async_script allows passing a callback
+                                b64_data = self.driver.execute_async_script(
+                                    script, image_url
+                                )
+                                if b64_data:
+                                    # Remove header if present
+                                    if "," in b64_data:
+                                        _, b64_data = b64_data.split(",", 1)
+                                    deal["image_bytes_b64"] = b64_data
+                                    print(
+                                        f"[StreetBeatScraper] Скачано фото для {title}"
+                                    )
+                            except Exception as e:
+                                print(
+                                    f"[StreetBeatScraper] Ошибка скачивания фото JS: {e}"
+                                )
+
                     deals.append(deal)
 
                 except Exception as e:

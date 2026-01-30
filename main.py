@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import base64
+from functools import partial
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
     ReplyKeyboardMarkup,
     KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from config import BOT_TOKEN, CHANNEL_ID
 from database import init_db, deal_exists, save_deal
@@ -34,14 +36,25 @@ SUBSCRIBERS = set()
 async def cmd_start(message: types.Message):
     SUBSCRIBERS.add(message.chat.id)
     kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🔍 Поиск скидок")]], resize_keyboard=True
+        keyboard=[
+            [KeyboardButton(text="🚀 Погнали!"), KeyboardButton(text="🔍 Поиск скидок")]
+        ],
+        resize_keyboard=True,
     )
     await message.answer(
-        "Привет! 👟 Я буду присылать тебе скидки на кроссовки с Brandshop и Lamoda.\n"
+        "Привет! 👟 Я буду мониторить скидки на кроссовки в популярных магазинах (Brandshop, Lamoda, Street Beat и др.).\n\n"
+        "Подписывайся на @Sneaker_Deals 🔥\n\n"
+        "Хватай скидки первым!⚡️\n\n"
         "Я автоматически проверяю сайты каждые 30 минут.\n"
-        "Нажми кнопку ниже или /latest чтобы запустить проверку прямо сейчас.",
+        "Нажми <b>🔍 Поиск скидок</b>, чтобы проверить прямо сейчас.",
         reply_markup=kb,
+        parse_mode="HTML",
     )
+
+
+@dp.message(F.text == "🚀 Погнали!")
+async def handle_home_button(message: types.Message):
+    await cmd_start(message)
 
 
 @dp.message(F.text == "🔍 Поиск скидок")
@@ -51,7 +64,7 @@ async def handle_search_button(message: types.Message):
 
 @dp.message(Command("latest"))
 async def cmd_latest(message: types.Message):
-    await message.answer("🔍 Ищу скидки на Brandshop и Lamoda, подождите...")
+    await message.answer("🔍 Сканирую магазины в поисках скидок, подождите...")
     count = await check_and_send_discounts(chat_id=message.chat.id)
     if count == 0:
         await message.answer("Пока новых скидок не найдено.")
@@ -91,32 +104,51 @@ async def check_and_send_discounts(chat_id=None):
             # Очищаем название
             cleaned_title = clean_title(deal["title"])
 
-            # Формируем сообщение (caption для фото)
-            source_name = deal.get("source", "Brandshop")
-            caption = (
-                f"👀 <b>Смотри, что нашел на {source_name}</b>\n\n"
-                f"{cleaned_title}\n\n"
-                f"💰 <b>{deal['price']}</b> (было {deal['old_price']})\n"
-                f"🏷 Скидка: {deal['discount']}\n\n"
-                f"📏 {size_label}: EU {sizes_str}"
-            )
-
-            # Создаем кнопку с партнерской ссылкой
+            # Создаем партнерскую ссылку
             aff_manager = AffiliateManager()
             aff_link = aff_manager.convert_link(
                 deal["link"], deal.get("source", "Unknown")
             )
 
+            # Create inline keyboard with "Посмотреть" button
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="Посмотреть 🛒", url=aff_link)]
+                    [InlineKeyboardButton(text="Посмотреть", url=aff_link)]
                 ]
+            )
+
+            # Формируем сообщение (caption для фото)
+            source_name = deal.get("source", "Brandshop")
+
+            price_line = f"💰 <b>{deal['price']}</b>"
+            if deal.get("old_price"):
+                price_line += f" (было {deal['old_price']})"
+
+            caption = (
+                f"👀 <b>Смотри, что нашел на {source_name}</b>\n\n"
+                f"{cleaned_title}\n\n"
+                f"{price_line}\n"
+                f"📏 {size_label}: EU {sizes_str}\n\n"
             )
 
             # --- ОПТИМИЗАЦИЯ ФОТО ---
             # Загружаем фото один раз перед отправкой всем получателям
             photo_bytes = None
-            if deal.get("image_url"):
+
+            # 1. Если фото уже скачано скрапером (base64)
+            if deal.get("image_bytes_b64"):
+                try:
+                    img_data = base64.b64decode(deal["image_bytes_b64"])
+                    # process_image ожидает url (для логов/резерва) и image_data
+                    func = partial(
+                        process_image, deal["image_url"], image_data=img_data
+                    )
+                    photo_bytes = await loop.run_in_executor(None, func)
+                except Exception as e:
+                    print(f"Error processing base64 image: {e}")
+
+            # 2. Если нет, пробуем скачать по URL (для других источников)
+            if not photo_bytes and deal.get("image_url"):
                 try:
                     photo_bytes = await loop.run_in_executor(
                         None, process_image, deal["image_url"]
@@ -167,7 +199,6 @@ async def check_and_send_discounts(chat_id=None):
                             target_id,
                             caption,
                             parse_mode="HTML",
-                            reply_markup=keyboard,
                         )
                 else:
                     # Если фото совсем нет
@@ -221,4 +252,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot stopped!")
+    except RuntimeError as e:
+        if str(e) == "Event loop is closed":
+            # This is a known issue on Windows with asyncio
+            pass
+        else:
+            raise
