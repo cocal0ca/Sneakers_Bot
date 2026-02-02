@@ -1,4 +1,9 @@
-import undetected_chromedriver as uc
+# import undetected_chromedriver as uc
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -14,22 +19,36 @@ STREETBEAT_URL = "https://street-beat.ru/cat/man/krossovki/sale/"
 class StreetBeatScraper:
     """
     Парсер для сайта street-beat.ru.
-    Использует undetected_chromedriver для обхода защиты.
+    Использует стандартный Selenium + selenium-stealth.
     """
 
     def __init__(self):
         self.driver = self._get_driver()
 
     def _get_driver(self):
-        options = uc.ChromeOptions()
-        # Headless режим может быть определен Cloudflare, но попробуем с ним или без
+        options = Options()
+        # Headless режим может быть определен Cloudflare, но попробуем с ним
         options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--start-maximized")
 
-        # Важно: версия должна совпадать или быть близкой к установленной
-        driver = uc.Chrome(options=options, version_main=144)
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+
+        # Selenium Stealth
+        stealth(
+            driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+
         return driver
 
     def close(self):

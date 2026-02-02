@@ -4,3 +4,4 @@ webdriver-manager
 undetected-chromedriver
 Pillow
 python-dotenv
+selenium-stealth

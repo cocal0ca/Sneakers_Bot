@@ -2,34 +2,58 @@
 Lamoda Scraper using undetected-chromedriver to bypass Cloudflare protection.
 """
 
-import undetected_chromedriver as uc
+# import undetected_chromedriver as uc
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 import re
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 from config import LAMODA_URL
+from selenium_stealth import stealth
 
 
 class LamodaScraper:
     """
-    Scraper for Lamoda.ru using undetected-chromedriver.
+    Scraper for Lamoda.ru using standard Selenium with selenium-stealth.
     """
 
     def __init__(self):
         self.driver = self._get_driver()
 
     def _get_driver(self):
-        options = uc.ChromeOptions()
+        options = Options()
         # Headless может быть заблокирован, пробуем без него
-        options.add_argument("--headless=new")
+        # options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
 
-        # undetected-chromedriver автоматически скачивает подходящую версию
-        # Указываем версию Chrome явно (133) для избежания несоответствия
-        driver = uc.Chrome(options=options, version_main=144)
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        # options.add_argument(
+        #     "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        # )
+
+        # Additional stealth
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+
+        driver = webdriver.Chrome(options=options)
+
+        # Selenium Stealth
+        stealth(
+            driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+
         return driver
 
     def close(self):
@@ -59,6 +83,11 @@ class LamodaScraper:
                     )
                 except Exception:
                     print(f"[LamodaScraper] Timeout on page {page_num}")
+                    # DEBUG: Save page source
+                    with open("debug_lamoda.html", "w", encoding="utf-8") as f:
+                        f.write(self.driver.page_source)
+                    print("[LamodaScraper] Saved debug_lamoda.html")
+
                     if "403" in self.driver.title:
                         print("[LamodaScraper] Blocked!")
                         break
