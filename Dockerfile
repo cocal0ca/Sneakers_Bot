@@ -32,5 +32,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем остальные файлы проекта
 COPY . .
 
+# Объявляем том для базы данных
+VOLUME /app/data
+
 # Команда запуска
 CMD ["python", "main.py"]

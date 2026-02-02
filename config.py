@@ -21,7 +21,9 @@ HEADERS = {
 }
 
 # Имя файла базы данных
-DB_NAME = "deals.db"
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_NAME = os.getenv("DB_NAME", os.path.join(DATA_DIR, "deals.db"))
 
 # ID канала для рассылки
 CHANNEL_ID = "@Sneaker_Deals"

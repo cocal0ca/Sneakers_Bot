@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import base64
+import time
 from functools import partial
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -11,14 +12,19 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 from config import BOT_TOKEN, CHANNEL_ID
-from database import init_db, deal_exists, save_deal
+from database import (
+    init_db,
+    deal_exists,
+    save_deal,
+    get_next_pending_deal,
+    mark_deal_as_sent,
+)
 from scraper import get_discounts
 from lamoda_scraper import get_lamoda_discounts
 from streetbeat_scraper import get_streetbeat_discounts
 from image_processing import process_image
 from affiliate_manager import AffiliateManager
 from aiogram.types import BufferedInputFile
-
 from utils import format_sizes, clean_title
 
 # Настройка логирования
@@ -31,6 +37,10 @@ dp = Dispatcher()
 # Список ID пользователей для рассылки (в идеале хранить в БД)
 SUBSCRIBERS = set()
 
+# Интервал публикации (в секундах)
+PUBLISH_INTERVAL = 20 * 60  # 20 минут
+LAST_PUBLISH_TIME = 0.0
+
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -42,11 +52,9 @@ async def cmd_start(message: types.Message):
         resize_keyboard=True,
     )
     await message.answer(
-        "Привет! 👟 Я буду мониторить скидки на кроссовки в популярных магазинах (Brandshop, Lamoda, Street Beat и др.).\n\n"
-        "Подписывайся на @Sneaker_Deals 🔥\n\n"
-        "Хватай скидки первым!⚡️\n\n"
-        "Я автоматически проверяю сайты каждые 30 минут.\n"
-        "Нажми <b>🔍 Поиск скидок</b>, чтобы проверить прямо сейчас.",
+        "Привет! 👟 Я буду мониторить скидки на кроссовки в популярных магазинах.\n"
+        "Скидки публикуются в канал @Sneaker_Deals плавно в течение дня.\n\n"
+        "Я автоматически ищу новые скидки каждые 30 минут.",
         reply_markup=kb,
         parse_mode="HTML",
     )
@@ -64,201 +72,234 @@ async def handle_search_button(message: types.Message):
 
 @dp.message(Command("latest"))
 async def cmd_latest(message: types.Message):
-    await message.answer("🔍 Сканирую магазины в поисках скидок, подождите...")
-    count = await check_and_send_discounts(chat_id=message.chat.id)
-    if count == 0:
-        await message.answer("Пока новых скидок не найдено.")
+    await message.answer("🔍 Запускаю внеплановый скан магазинов...")
+    # Запускаем скан
+    await run_scrapers()
+
+    # Пробуем отправить одну скидку сразу (вне очереди) для проверки
+    await message.answer(
+        "✅ Скан завершен. Новые скидки добавлены в очередь и будут опубликованы по графику."
+    )
 
 
-async def check_and_send_discounts(chat_id=None):
+async def run_scrapers():
     """
-    Запускает парсеры и рассылает новые скидки.
-    Если передан chat_id, отправляет только ему (ручной запуск).
-    Иначе отправляет всем подписчикам.
+    Запускает парсеры, находит товары и сохраняет их в БД с флагом sent=0.
+    Ничего не отправляет в Телеграм.
+    """
+    print("[Scraper] Starting periodic scan...")
+    loop = asyncio.get_running_loop()
+
+    try:
+        brandshop_deals = await loop.run_in_executor(None, get_discounts)
+    except Exception as e:
+        print(f"[Scraper] Brandshop error: {e}")
+        brandshop_deals = []
+
+    try:
+        lamoda_deals = await loop.run_in_executor(None, get_lamoda_discounts)
+    except Exception as e:
+        print(f"[Scraper] Lamoda error: {e}")
+        lamoda_deals = []
+
+    try:
+        streetbeat_deals = await loop.run_in_executor(None, get_streetbeat_discounts)
+    except Exception as e:
+        print(f"[Scraper] StreetBeat error: {e}")
+        streetbeat_deals = []
+
+    all_deals = brandshop_deals + lamoda_deals + streetbeat_deals
+    print(f"[Scraper] Found {len(all_deals)} total items. Saving to DB...")
+
+    new_count = 0
+    for deal in all_deals:
+        # Проверяем наличие.
+        is_known = deal_exists(deal["link"])
+
+        # Сохраняем всегда, чтобы обновить last_seen.
+        # Если is_known=False (новый), то sent=False (по умолчанию в save_deal, если не передать)
+        # Если мы передадим sent=False для СТАРОГО товара, save_deal НЕ перезапишет sent=1 на 0.
+
+        save_deal(
+            deal["title"],
+            deal["price"],
+            deal["old_price"],
+            deal["link"],
+            sizes=deal.get("sizes"),
+            image_url=deal.get("image_url"),
+            source=deal.get("source"),
+            image_bytes_b64=deal.get("image_bytes_b64"),
+            sent=False,  # Это ни на что не повлияет для старых записей, но для новых поставит 0
+        )
+
+        if not is_known:
+            new_count += 1
+
+    print(f"[Scraper] Scan finished. New/Resurfaced deals queued: {new_count}")
+
+
+async def send_single_deal(deal_data, target_id=None):
+    """
+    Отправляет одну конкретную скидку (словарь deal_data из БД) в target_id (или в канал).
     """
     loop = asyncio.get_running_loop()
 
-    # Запускаем оба парсера параллельно в отдельных потоках
-    brandshop_deals = await loop.run_in_executor(None, get_discounts)
-    lamoda_deals = await loop.run_in_executor(None, get_lamoda_discounts)
-    streetbeat_deals = await loop.run_in_executor(None, get_streetbeat_discounts)
+    # Восстанавливаем данные из БД
+    link = deal_data["link"]
+    title = deal_data["title"]
+    price = deal_data["price"]
+    old_price = deal_data["old_price"]
+    source_name = deal_data.get("source", "Unknown")
+    image_url = deal_data.get("image_url")
+    image_bytes_b64 = deal_data.get("image_bytes_b64")
 
-    # Объединяем результаты
-    deals = brandshop_deals + lamoda_deals + streetbeat_deals
-    new_deals_count = 0
+    sizes_str_db = deal_data.get("sizes", "")
+    # В БД хранится строка "36,37,...". Нам нужно отформатировать красиво.
+    if sizes_str_db:
+        sizes_list = sizes_str_db.split(",")
+    else:
+        sizes_list = []
 
-    for deal in deals:
-        # Проверяем, нужно ли отправлять (возвращает False, если нужно отправить)
-        # ВНИМАНИЕ: deal_exists теперь возвращает True если "существует и актуально" (не слать)
-        # и False если "новое или вернулось" (слать)
-        should_post = not deal_exists(deal["link"])
+    formatted_sizes = format_sizes(sizes_list)
+    size_label = "Размер" if len(sizes_list) == 1 else "Размеры"
+    cleaned_title = clean_title(title)
 
-        if should_post:
-            # Формируем строку с размерами
-            sizes_list = deal.get("sizes", [])
-            sizes_str = format_sizes(sizes_list)
+    # Партнерская ссылка
+    aff_manager = AffiliateManager()
+    aff_link = aff_manager.convert_link(link, source_name)
 
-            # Выбираем заголовок в зависимости от количества размеров
-            size_label = "Размер" if len(sizes_list) == 1 else "Размеры"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Посмотреть", url=aff_link)]]
+    )
 
-            # Очищаем название
-            cleaned_title = clean_title(deal["title"])
+    price_line = f"💰 <b>{price}</b>"
+    if old_price:
+        price_line += f" (было {old_price})"
 
-            # Создаем партнерскую ссылку
-            aff_manager = AffiliateManager()
-            aff_link = aff_manager.convert_link(
-                deal["link"], deal.get("source", "Unknown")
-            )
+    caption = (
+        f"👀 <b>Смотри, что нашел на {source_name}</b>\n\n"
+        f"{cleaned_title}\n\n"
+        f"{price_line}\n"
+        f"📏 {size_label}: EU {formatted_sizes}\n\n"
+    )
 
-            # Create inline keyboard with "Посмотреть" button
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="Посмотреть", url=aff_link)]
-                ]
-            )
+    # --- Подготовка фото ---
+    photo_bytes = None
 
-            # Формируем сообщение (caption для фото)
-            source_name = deal.get("source", "Brandshop")
+    # 1. Из base64 (если есть в БД)
+    if image_bytes_b64:
+        try:
+            img_data = base64.b64decode(image_bytes_b64)
+            func = partial(process_image, image_url, image_data=img_data)
+            photo_bytes = await loop.run_in_executor(None, func)
+        except Exception:
+            pass
 
-            price_line = f"💰 <b>{deal['price']}</b>"
-            if deal.get("old_price"):
-                price_line += f" (было {deal['old_price']})"
+    # 2. По URL
+    if not photo_bytes and image_url:
+        try:
+            photo_bytes = await loop.run_in_executor(None, process_image, image_url)
+        except Exception:
+            pass
 
-            caption = (
-                f"👀 <b>Смотри, что нашел на {source_name}</b>\n\n"
-                f"{cleaned_title}\n\n"
-                f"{price_line}\n"
-                f"📏 {size_label}: EU {sizes_str}\n\n"
-            )
+    # Функция отправки (копия старой логики)
+    async def do_send(chat_id):
+        if photo_bytes:
+            try:
+                photo_bytes.seek(0)
+                photo_file = BufferedInputFile(
+                    photo_bytes.read(), filename="sneaker.jpg"
+                )
+                await bot.send_photo(
+                    chat_id,
+                    photo=photo_file,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+                return
+            except Exception:
+                pass
 
-            # --- ОПТИМИЗАЦИЯ ФОТО ---
-            # Загружаем фото один раз перед отправкой всем получателям
-            photo_bytes = None
+        if image_url:
+            try:
+                await bot.send_photo(
+                    chat_id,
+                    photo=image_url,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+                return
+            except Exception:
+                pass
 
-            # 1. Если фото уже скачано скрапером (base64)
-            if deal.get("image_bytes_b64"):
-                try:
-                    img_data = base64.b64decode(deal["image_bytes_b64"])
-                    # process_image ожидает url (для логов/резерва) и image_data
-                    func = partial(
-                        process_image, deal["image_url"], image_data=img_data
-                    )
-                    photo_bytes = await loop.run_in_executor(None, func)
-                except Exception as e:
-                    print(f"Error processing base64 image: {e}")
+        # Текст
+        await bot.send_message(
+            chat_id, caption, parse_mode="HTML", reply_markup=keyboard
+        )
 
-            # 2. Если нет, пробуем скачать по URL (для других источников)
-            if not photo_bytes and deal.get("image_url"):
-                try:
-                    photo_bytes = await loop.run_in_executor(
-                        None, process_image, deal["image_url"]
-                    )
-                except Exception as e:
-                    print(f"Error processing image for {deal['title']}: {e}")
-                    photo_bytes = None
+    # Отправка
+    if target_id:
+        try:
+            await do_send(target_id)
+        except Exception as e:
+            print(f"Error sending to {target_id}: {e}")
+    elif CHANNEL_ID:
+        try:
+            await do_send(CHANNEL_ID)
+        except Exception as e:
+            print(f"Error sending to channel: {e}")
 
-            # Вспомогательная функция отправки
-            async def send_deal_photo(target_id, photo_data=None):
-                # Если смогли скачать фото
-                if photo_data:
-                    try:
-                        # Важно: сбрасываем указатель в начало, так как буфер мог быть прочитан
-                        photo_data.seek(0)
 
-                        # Создаем новый InputFile для каждой отправки
-                        photo_file = BufferedInputFile(
-                            photo_data.read(), filename="sneaker.jpg"
-                        )
+async def publisher_task():
+    """
+    Фоновая задача, которая проверяет очередь и отправляет посты раз в PUBLISH_INTERVAL.
+    """
+    global LAST_PUBLISH_TIME
+    print("Publisher task started.")
 
-                        await bot.send_photo(
-                            target_id,
-                            photo=photo_file,
-                            caption=caption,
-                            parse_mode="HTML",
-                            reply_markup=keyboard,
-                        )
-                        return  # Успех
-                    except Exception as e:
-                        print(f"Photo bytes send error to {target_id}: {e}")
-                        # Если не вышло байтами, пробуем URL ниже
+    # Даем фору при старте, чтобы не постить сразу, если только что запустили
+    # Или наоборот, хотим сразу? Пусть первый раз будет через интервал
+    LAST_PUBLISH_TIME = time.time() - (PUBLISH_INTERVAL - 60)  # Старт через минуту
 
-                # Если байтов нет или отправка байтами упала - пробуем URL
-                if deal.get("image_url"):
-                    try:
-                        await bot.send_photo(
-                            target_id,
-                            photo=deal["image_url"],
-                            caption=caption,
-                            parse_mode="HTML",
-                            reply_markup=keyboard,
-                        )
-                    except Exception as e:
-                        print(f"Photo URL send error to {target_id}: {e}")
-                        # Если и URL не прошел - шлем текст
-                        await bot.send_message(
-                            target_id,
-                            caption,
-                            parse_mode="HTML",
-                        )
-                else:
-                    # Если фото совсем нет
-                    await bot.send_message(
-                        target_id,
-                        caption,
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                    )
+    while True:
+        now = time.time()
+        time_since = now - LAST_PUBLISH_TIME
 
-            # Отправляем в канал
-            if CHANNEL_ID:
-                try:
-                    await send_deal_photo(CHANNEL_ID, photo_bytes)
-                except Exception as e:
-                    print(f"Error sending to channel: {e}")
+        if time_since >= PUBLISH_INTERVAL:
+            deal_data = get_next_pending_deal()
 
-            # Отправляем подписчикам (тест)
-            if chat_id:
-                try:
-                    await send_deal_photo(chat_id, photo_bytes)
-                except Exception:
-                    pass
+            if deal_data:
+                print(f"[Publisher] Publishing deal: {deal_data['title']}")
+                await send_single_deal(deal_data)
+                mark_deal_as_sent(deal_data["link"])
+                LAST_PUBLISH_TIME = time.time()
+            else:
+                # Очередь пуста
+                pass
 
-            new_deals_count += 1
-            await asyncio.sleep(1)  # Пауза чтобы не спамить в API телеграма
-
-        # ВАЖНО: Мы ВСЕГДА обновляем запись в базе (last_seen = now)
-        save_deal(deal["title"], deal["price"], deal["old_price"], deal["link"])
-
-    return new_deals_count
+        await asyncio.sleep(60)
 
 
 async def scheduler():
-    """Фоновая задача, которая запускается раз в 30 минут"""
+    """Фоновая задача скрапинга запускается раз в 30 минут"""
     while True:
-        await asyncio.sleep(60 * 30)  # 30 минут
-        if SUBSCRIBERS:
-            print("Запуск плановой проверки...")
-            await check_and_send_discounts()
+        await run_scrapers()
+        await asyncio.sleep(60 * 30)
 
 
 async def main():
     init_db()
 
-    # Запускаем планировщик в фоне
+    # Запускаем планировщик скрапинга
     asyncio.create_task(scheduler())
+    # Запускаем планировщик рассылки
+    asyncio.create_task(publisher_task())
 
     print("Бот запущен!")
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot stopped!")
-    except RuntimeError as e:
-        if str(e) == "Event loop is closed":
-            # This is a known issue on Windows with asyncio
-            pass
-        else:
-            raise
+    asyncio.run(main())

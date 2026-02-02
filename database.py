@@ -28,14 +28,38 @@ def init_db():
             try:
                 cursor.execute("ALTER TABLE deals ADD COLUMN last_seen TIMESTAMP")
             except sqlite3.OperationalError:
-                # Если вдруг колонка уже есть (иногда бывает рассинхрон)
                 pass
-
-            # Заполняем старые записи текущим временем
             now = datetime.datetime.now()
             cursor.execute("UPDATE deals SET last_seen = ?", (now,))
 
-        # Если осталась старая колонка date_added, можно её игнорировать или удалить (в SQLite сложно удалять)
+        if "sent" not in columns:
+            print("База данных: добавляем колонку sent...")
+            try:
+                cursor.execute("ALTER TABLE deals ADD COLUMN sent INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+
+        # Миграция для дополнительных полей (для очереди)
+        if "sizes" not in columns:
+            try:
+                cursor.execute("ALTER TABLE deals ADD COLUMN sizes TEXT")
+            except:
+                pass
+        if "image_url" not in columns:
+            try:
+                cursor.execute("ALTER TABLE deals ADD COLUMN image_url TEXT")
+            except:
+                pass
+        if "source" not in columns:
+            try:
+                cursor.execute("ALTER TABLE deals ADD COLUMN source TEXT")
+            except:
+                pass
+        if "image_bytes_b64" not in columns:
+            try:
+                cursor.execute("ALTER TABLE deals ADD COLUMN image_bytes_b64 TEXT")
+            except:
+                pass
 
         conn.commit()
 
@@ -65,8 +89,6 @@ def deal_exists(link):
             return False
 
         # Проверяем "дырку" (gap)
-        # Если мы видели товар недавно (меньше чем REPOST_DAYS назад), значит он просто висит на сайте
-        # Если мы не видели его ДАВНО (> REPOST_DAYS), значит он пропал и вернулся -> шлем
         delta = datetime.datetime.now() - last_seen
         if delta.days >= REPOST_DAYS:
             return False  # Прошло много времени, скидка "вернулась"
@@ -74,20 +96,103 @@ def deal_exists(link):
         return True  # Скидка актуальна, видели недавно, не спамим
 
 
-def save_deal(title, price, old_price, link):
+def save_deal(
+    title,
+    price,
+    old_price,
+    link,
+    sizes=None,
+    image_url=None,
+    source=None,
+    image_bytes_b64=None,
+    sent=False,
+):
     """
-    Сохраняет товар или обновляет статус 'last_seen'.
-    Эту функцию надо вызывать ДЛЯ ВСЕХ найденных товаров.
+    Сохраняет товар со всеми данными для отложенной публикации.
+    sizes - ожидается список строк, мы его склеим в строку через запятую.
     """
     now = datetime.datetime.now()
+    sent_int = 1 if sent else 0
+
+    # Конвертируем список размеров в строку для БД
+    sizes_str = ""
+    if sizes:
+        if isinstance(sizes, list):
+            sizes_str = ",".join(sizes)
+        else:
+            sizes_str = str(sizes)
+
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
-        # INSERT OR REPLACE обновит запись и поставит свежий last_seen
+
+        cursor.execute("SELECT sent FROM deals WHERE link = ?", (link,))
+        row = cursor.fetchone()
+
+        if row is None:
+            # Новая запись со всеми полями
+            cursor.execute(
+                """
+                INSERT INTO deals (link, title, price, old_price, last_seen, sent, sizes, image_url, source, image_bytes_b64)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    link,
+                    title,
+                    price,
+                    old_price,
+                    now,
+                    sent_int,
+                    sizes_str,
+                    image_url,
+                    source,
+                    image_bytes_b64,
+                ),
+            )
+        else:
+            # Обновляем, включая новые поля (вдруг размеры обновились)
+            cursor.execute(
+                """
+                UPDATE deals 
+                SET title=?, price=?, old_price=?, last_seen=?, sizes=?, image_url=?, source=?, image_bytes_b64=?
+                WHERE link=?
+                """,
+                (
+                    title,
+                    price,
+                    old_price,
+                    now,
+                    sizes_str,
+                    image_url,
+                    source,
+                    image_bytes_b64,
+                    link,
+                ),
+            )
+
+            if sent:
+                cursor.execute("UPDATE deals SET sent=1 WHERE link=?", (link,))
+
+        conn.commit()
+
+
+def get_next_pending_deal():
+    """Возвращает одну неотправленную скидку (самую старую по дате обнаружения)."""
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        # Берем неотправленные (sent=0), сортируем по last_seen (чтобы старые первыми ушли)
         cursor.execute(
-            """
-            INSERT OR REPLACE INTO deals (link, title, price, old_price, last_seen)
-            VALUES (?, ?, ?, ?, ?)
-        """,
-            (link, title, price, old_price, now),
+            "SELECT * FROM deals WHERE sent = 0 ORDER BY last_seen ASC LIMIT 1"
         )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def mark_deal_as_sent(link):
+    """Помечает скидку как отправленную."""
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE deals SET sent = 1 WHERE link = ?", (link,))
         conn.commit()
