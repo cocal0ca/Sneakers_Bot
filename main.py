@@ -20,7 +20,7 @@ from database import (
     mark_deal_as_sent,
 )
 from scraper import get_discounts
-from lamoda_scraper import get_lamoda_discounts
+from lamoda_scraper_pw import get_lamoda_discounts
 from streetbeat_scraper import get_streetbeat_discounts
 from image_processing import process_image
 from affiliate_manager import AffiliateManager

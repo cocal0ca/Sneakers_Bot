@@ -5,3 +5,5 @@ undetected-chromedriver
 Pillow
 python-dotenv
 selenium-stealth
+playwright
+playwright-stealth

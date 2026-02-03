@@ -231,7 +231,7 @@ class StreetBeatScraper:
 
                     deals.append(deal)
 
-                except Exception as e:
+                except Exception:
                     # print(f"Error processing item: {e}")
                     continue
 

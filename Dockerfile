@@ -29,6 +29,9 @@ COPY requirements.txt .
 # Устанавливаем Python-зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Устанавливаем Playwright и его зависимости (Chromium)
+RUN playwright install --with-deps chromium
+
 # Копируем остальные файлы проекта
 COPY . .
 
