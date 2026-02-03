@@ -26,7 +26,7 @@ class LamodaScraperPW:
             # headless=False is good for debugging, but for production use True
             # Timeweb might need headless=True
             browser = p.chromium.launch(
-                headless=False,
+                headless=True,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
