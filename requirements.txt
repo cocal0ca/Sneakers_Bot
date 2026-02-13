@@ -1,0 +1,9 @@
+aiogram>=3.0
+selenium
+webdriver-manager
+undetected-chromedriver
+Pillow
+python-dotenv
+selenium-stealth
+playwright
+playwright-stealth
